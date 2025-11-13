@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BRIS Ultimate PP Parser</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+      background-color: #f4f6fb;
+      color: #1f2937;
+    }
+
+    body {
+      margin: 0;
+      padding: 2rem;
+      display: flex;
+      justify-content: center;
+    }
+
+    .app {
+      width: min(1100px, 100%);
+      background: #ffffff;
+      border-radius: 16px;
+      box-shadow: 0 20px 40px rgba(15, 23, 42, 0.1);
+      padding: 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    h1 {
+      font-size: 1.75rem;
+      margin: 0;
+    }
+
+    .drop-zone {
+      border: 2px dashed #4f46e5;
+      border-radius: 12px;
+      padding: 1.5rem;
+      text-align: center;
+      background: #f8f9ff;
+      transition: background 0.2s ease, border-color 0.2s ease;
+      position: relative;
+    }
+
+    .drop-zone.dragging {
+      background: #eef2ff;
+      border-color: #312e81;
+    }
+
+    .drop-zone input[type="file"] {
+      opacity: 0;
+      position: absolute;
+      inset: 0;
+      cursor: pointer;
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      align-items: center;
+    }
+
+    button {
+      border: none;
+      background: #4f46e5;
+      color: white;
+      padding: 0.75rem 1.5rem;
+      border-radius: 999px;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    button:disabled {
+      background: #c7d2fe;
+      cursor: not-allowed;
+      box-shadow: none;
+      transform: none;
+    }
+
+    button:not(:disabled):hover {
+      transform: translateY(-1px);
+      box-shadow: 0 10px 20px rgba(79, 70, 229, 0.25);
+    }
+
+    .progress-shell {
+      width: 100%;
+      background: #e5e7eb;
+      border-radius: 999px;
+      height: 12px;
+      overflow: hidden;
+    }
+
+    .progress-bar {
+      height: 100%;
+      width: 0;
+      background: linear-gradient(90deg, #4f46e5, #06b6d4);
+      transition: width 0.2s ease;
+    }
+
+    #status {
+      font-size: 0.95rem;
+      color: #374151;
+    }
+
+    #previewMeta {
+      font-size: 0.9rem;
+      color: #6b7280;
+    }
+
+    .table-wrapper {
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      overflow: hidden;
+      background: #fafafa;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+
+    thead {
+      background: #eef2ff;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+
+    th, td {
+      padding: 0.5rem 0.75rem;
+      border-bottom: 1px solid #e5e7eb;
+      text-align: left;
+      max-width: 220px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    tbody {
+      display: block;
+      max-height: 320px;
+      overflow: auto;
+    }
+
+    thead tr {
+      display: table;
+      width: 100%;
+      table-layout: fixed;
+    }
+
+    tbody tr {
+      display: table;
+      width: 100%;
+      table-layout: fixed;
+    }
+
+    @media (max-width: 768px) {
+      body {
+        padding: 1rem;
+      }
+
+      .app {
+        padding: 1.5rem;
+      }
+
+      button {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>BRIS Ultimate PP Parser</h1>
+      <p>Upload an "Ultimate PP's w/ QuickPlay Comments" PDF and extract every horse's past performances into a single CSV.</p>
+    </header>
+
+    <label id="dropZone" class="drop-zone">
+      <strong>Drag &amp; drop a PDF or click to choose</strong>
+      <input type="file" id="fileInput" accept="application/pdf" />
+    </label>
+
+    <div class="controls">
+      <button id="parseBtn" disabled>Parse PDF</button>
+      <div class="progress-shell">
+        <div id="progressBar" class="progress-bar"></div>
+      </div>
+      <span id="status">No file selected.</span>
+    </div>
+
+    <div id="previewMeta"></div>
+
+    <div class="table-wrapper">
+      <table id="previewTable">
+        <thead></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div class="controls">
+      <button id="downloadBtn" disabled>Download CSV</button>
+    </div>
+  </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.9.179/pdf.min.js" referrerpolicy="no-referrer"></script>
+  <script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.9.179/pdf.worker.min.js";
+
+    const HEADERS = [
+      "Horse",
+      "DATE",
+      "TRK",
+      "DIST",
+      "RR",
+      "RACETYPE",
+      "CR",
+      "E1",
+      "E2/",
+      "LP",
+      "1c",
+      "2c",
+      "SPD",
+      "PP",
+      "ST",
+      "1C",
+      "2C",
+      "STR",
+      "FIN",
+      "JOCKEY",
+      "ODDS",
+      "Top Finishers",
+      "Comment",
+      "raw_line"
+    ];
+
+    const surfaceConditions = new Set(["ft", "sy", "gd", "fm", "yl", "hy", "my", "sl", "wf", "sf", "sy", "mud"]);
+    const junkTokens = new Set(["lb", "lf", "bf", "b", "bl", "bf", "f", "rf", "ff", "cf", "sf", "af"]);
+
+    const dropZone = document.getElementById("dropZone");
+    const fileInput = document.getElementById("fileInput");
+    const parseBtn = document.getElementById("parseBtn");
+    const downloadBtn = document.getElementById("downloadBtn");
+    const progressBar = document.getElementById("progressBar");
+    const statusEl = document.getElementById("status");
+    const previewTable = document.getElementById("previewTable");
+    const previewHead = previewTable.querySelector("thead");
+    const previewBody = previewTable.querySelector("tbody");
+    const previewMeta = document.getElementById("previewMeta");
+
+    let currentFile = null;
+    let parsedRows = [];
+
+    dropZone.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      dropZone.classList.add("dragging");
+    });
+
+    dropZone.addEventListener("dragleave", () => {
+      dropZone.classList.remove("dragging");
+    });
+
+    dropZone.addEventListener("drop", (event) => {
+      event.preventDefault();
+      dropZone.classList.remove("dragging");
+      if (!event.dataTransfer.files?.length) return;
+      const file = event.dataTransfer.files[0];
+      if (file.type !== "application/pdf") {
+        showStatus("Please drop a PDF file.", true);
+        return;
+      }
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      fileInput.files = dt.files;
+      handleFileSelection(file);
+    });
+
+    fileInput.addEventListener("change", (event) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      handleFileSelection(file);
+    });
+
+    parseBtn.addEventListener("click", async () => {
+      if (!currentFile) return;
+      disableControls(true);
+      updateProgress(0);
+      showStatus("Parsing PDF…", false);
+      parsedRows = [];
+
+      try {
+        const lines = await extractLinesFromPDF(currentFile, (percent) => {
+          updateProgress(percent);
+          showStatus(`Reading PDF… ${percent.toFixed(0)}%`, false);
+        });
+
+        const blocks = segmentHorseBlocks(lines);
+        let totalRows = 0;
+
+        for (const block of blocks) {
+          const ppLines = extractPastPerformances(block);
+          totalRows += ppLines.length;
+          for (const raceLine of ppLines) {
+            parsedRows.push(parseRaceRow(raceLine, block.horseName));
+          }
+          await idle();
+        }
+
+        if (!parsedRows.length) {
+          showStatus("No past performance rows were detected. Please verify the PDF format.", true);
+          previewMeta.textContent = "";
+          renderPreview([]);
+          downloadBtn.disabled = true;
+        } else {
+          showStatus(`Parsed ${parsedRows.length} race rows from ${blocks.length} horses.`, false);
+          previewMeta.textContent = `Previewing the first ${Math.min(parsedRows.length, 100)} rows of ${parsedRows.length}.`;
+          renderPreview(parsedRows);
+          downloadBtn.disabled = false;
+        }
+      } catch (error) {
+        console.error(error);
+        showStatus(`Parsing failed: ${error.message}`, true);
+        parsedRows = [];
+        previewMeta.textContent = "";
+        renderPreview([]);
+        downloadBtn.disabled = true;
+      } finally {
+        disableControls(false);
+        updateProgress(100);
+      }
+    });
+
+    downloadBtn.addEventListener("click", () => {
+      if (!parsedRows.length) return;
+      const csv = toCSV(parsedRows, HEADERS);
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "pp_all_races.csv";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    });
+
+    function handleFileSelection(file) {
+      currentFile = file;
+      parseBtn.disabled = false;
+      showStatus(`Ready to parse: ${file.name}`, false);
+      previewMeta.textContent = "";
+      renderPreview([]);
+      downloadBtn.disabled = true;
+      updateProgress(0);
+    }
+
+    function disableControls(isBusy) {
+      parseBtn.disabled = isBusy || !currentFile;
+      downloadBtn.disabled = isBusy || !parsedRows.length;
+      parseBtn.textContent = isBusy ? "Parsing…" : "Parse PDF";
+    }
+
+    function showStatus(message, isError) {
+      statusEl.textContent = message;
+      statusEl.style.color = isError ? "#dc2626" : "#374151";
+    }
+
+    function updateProgress(percent) {
+      const clamped = Math.max(0, Math.min(100, percent));
+      progressBar.style.width = `${clamped}%`;
+    }
+
+    function renderPreview(rows) {
+      previewHead.innerHTML = "";
+      previewBody.innerHTML = "";
+
+      if (!rows.length) {
+        return;
+      }
+
+      const headRow = document.createElement("tr");
+      for (const header of HEADERS) {
+        const th = document.createElement("th");
+        th.textContent = header;
+        headRow.appendChild(th);
+      }
+      previewHead.appendChild(headRow);
+
+      const slice = rows.slice(0, 100);
+      for (const row of slice) {
+        const tr = document.createElement("tr");
+        for (const header of HEADERS) {
+          const td = document.createElement("td");
+          td.textContent = row[header] ?? "";
+          tr.appendChild(td);
+        }
+        previewBody.appendChild(tr);
+      }
+    }
+
+    async function extractLinesFromPDF(file, onProgress) {
+      const data = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data }).promise;
+      const lines = [];
+
+      for (let page = 1; page <= pdf.numPages; page += 1) {
+        const pageObj = await pdf.getPage(page);
+        const textContent = await pageObj.getTextContent();
+
+        const rows = new Map();
+        for (const item of textContent.items) {
+          const y = Math.round(item.transform[5]);
+          const x = item.transform[4];
+          if (!rows.has(y)) {
+            rows.set(y, []);
+          }
+          rows.get(y).push({ x, text: item.str });
+        }
+
+        const ordered = Array.from(rows.entries())
+          .sort((a, b) => b[0] - a[0])
+          .map(([, entries]) => entries.sort((a, b) => a.x - b.x));
+
+        for (const entry of ordered) {
+          const joined = entry.map((segment) => segment.text).join(" ");
+          const normalized = normalizeWhitespace(joined);
+          if (normalized.length) {
+            lines.push(normalized);
+          } else {
+            lines.push("");
+          }
+        }
+
+        onProgress?.((page / pdf.numPages) * 100);
+        await idle();
+      }
+
+      return lines;
+    }
+
+    function segmentHorseBlocks(lines) {
+      const blocks = [];
+      let current = null;
+      // Matches the leading post-position number followed by the horse name, e.g. "1 Lucky Old Son (E 6)".
+      const horseHeader = /^\s*\d+\s+([^\(]+)\(/;
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        const match = trimmed.match(horseHeader);
+        if (match) {
+          const horseName = normalizeWhitespace(match[1]).trim();
+          current = { horseName, lines: [] };
+          blocks.push(current);
+        }
+        if (current) {
+          current.lines.push(line);
+        }
+      }
+
+      return blocks;
+    }
+
+    function extractPastPerformances(block) {
+      const ppLines = [];
+      // Identify the Past Performances table header even if spacing varies slightly across PDFs.
+      const headerIndex = block.lines.findIndex((line) => /DATE\s+TRK\s+DIST\s+RR\s+RACETYPE/i.test(line));
+      if (headerIndex === -1) {
+        return ppLines;
+      }
+
+      let current = "";
+      // Detect workout rows (e.g. "01Nov GP 4f ft") which signal the end of the PP section.
+      const workoutLine = /^\s*\d{2}[A-Za-z]{3}\s+[A-Za-z]{2,3}\s+\d(?:f|m)/i;
+      // Reuse the horse header expression so we stop when the next horse begins.
+      const horseHeader = /^\s*\d+\s+[^\(]+\(/;
+      for (let i = headerIndex + 1; i < block.lines.length; i += 1) {
+        const line = block.lines[i];
+        const trimmed = line.trim();
+
+        if (
+          /Workouts?/i.test(trimmed) ||
+          workoutLine.test(trimmed) ||
+          horseHeader.test(trimmed) ||
+          /Prime Power/i.test(trimmed)
+        ) {
+          if (current) {
+            ppLines.push(normalizeWhitespace(current));
+            current = "";
+          }
+          break;
+        }
+
+        // A new race row always begins with the DDMonYY pattern at the start of the line.
+        const newRow = /^\d{2}[A-Za-z]{3}\d{2}\b/.test(trimmed);
+        if (newRow) {
+          if (current) {
+            ppLines.push(normalizeWhitespace(current));
+          }
+          current = trimmed;
+        } else if (current) {
+          if (trimmed) {
+            current += " " + trimmed;
+          }
+        }
+      }
+
+      if (current) {
+        ppLines.push(normalizeWhitespace(current));
+      }
+
+      return ppLines;
+    }
+
+    function parseRaceRow(line, horseName) {
+      const row = {};
+      for (const header of HEADERS) {
+        row[header] = "";
+      }
+
+      row.Horse = horseName.trim();
+      row.raw_line = line;
+
+      let working = normalizeWhitespace(line);
+      const dateMatch = working.match(/^(\d{2}[A-Za-z]{3}\d{2})\b/);
+      if (!dateMatch) {
+        return row;
+      }
+
+      row.DATE = dateMatch[1];
+      working = working.slice(dateMatch[0].length).trim();
+
+      const tokens = working.split(/\s+/).filter(Boolean);
+      let idx = 0;
+
+      row.TRK = cleanTrack(tokens[idx++] ?? "");
+      row.DIST = cleanDistance(tokens[idx++] ?? "");
+
+      while (idx < tokens.length && surfaceConditions.has(cleanToken(tokens[idx]).toLowerCase())) {
+        idx += 1;
+      }
+
+      const preRaceTokens = [];
+      while (idx < tokens.length) {
+        const token = tokens[idx];
+        if (looksLikeRaceType(token)) {
+          row.RACETYPE = cleanRaceType(token);
+          idx += 1;
+          break;
+        }
+        preRaceTokens.push(token);
+        idx += 1;
+      }
+
+      if (!row.RR) {
+        const rrToken = preRaceTokens.find((tok) => cleanNumber(tok));
+        if (rrToken) {
+          row.RR = cleanNumber(rrToken);
+        }
+      }
+
+      if (idx < tokens.length && looksNumeric(tokens[idx])) {
+        row.CR = cleanNumber(tokens[idx]);
+        idx += 1;
+      }
+
+      const statFields = ["E1", "E2/", "LP", "1c", "2c", "SPD", "PP", "ST", "1C", "2C", "STR", "FIN"];
+      for (const field of statFields) {
+        while (idx < tokens.length && isGarbageToken(tokens[idx])) {
+          idx += 1;
+        }
+        if (idx < tokens.length && looksNumeric(tokens[idx])) {
+          row[field] = cleanNumber(tokens[idx]);
+          idx += 1;
+        }
+      }
+
+      while (idx < tokens.length && isGarbageToken(tokens[idx])) {
+        idx += 1;
+      }
+
+      if (idx < tokens.length) {
+        row.JOCKEY = cleanName(tokens[idx]);
+        idx += 1;
+        if (idx < tokens.length && /^[A-Za-z]{1,3}\.?$/.test(tokens[idx])) {
+          row.JOCKEY = `${row.JOCKEY} ${cleanName(tokens[idx])}`.trim();
+          idx += 1;
+        }
+      }
+
+      while (idx < tokens.length && junkTokens.has(cleanToken(tokens[idx]).toLowerCase())) {
+        idx += 1;
+      }
+
+      if (idx < tokens.length && /[0-9]/.test(tokens[idx])) {
+        row.ODDS = cleanOdds(tokens[idx]);
+        idx += 1;
+      }
+
+      const tailTokens = tokens.slice(idx);
+      const finishers = [];
+      let commentStart = tailTokens.length;
+      let usedUntil = 0;
+      let buffer = [];
+      for (let j = 0; j < tailTokens.length; j += 1) {
+        const raw = tailTokens[j];
+        const cleaned = cleanName(raw);
+        const hasComma = /,/.test(raw);
+        const looksLikeComment = /;|\.|--/.test(raw);
+
+        if (looksLikeComment && finishers.length) {
+          commentStart = j;
+          break;
+        }
+
+        if (cleaned) {
+          buffer.push(cleaned);
+        }
+
+        if (hasComma && buffer.length) {
+          finishers.push(buffer.join(" "));
+          buffer = [];
+          usedUntil = j + 1;
+          if (finishers.length === 3) {
+            commentStart = j + 1;
+            break;
+          }
+        }
+      }
+
+      if (finishers.length < 3 && buffer.length) {
+        finishers.push(buffer.join(" "));
+        usedUntil = tailTokens.length;
+      }
+
+      if (commentStart === tailTokens.length && usedUntil < tailTokens.length) {
+        commentStart = usedUntil;
+      }
+
+      if (finishers.length) {
+        row["Top Finishers"] = finishers.join(", ");
+      }
+      if (commentStart < tailTokens.length) {
+        row.Comment = tailTokens.slice(commentStart).join(" ");
+      }
+
+      return row;
+    }
+
+    function looksLikeRaceType(token) {
+      if (!token) return false;
+      const cleaned = cleanRaceType(token);
+      if (!cleaned) return false;
+      if (surfaceConditions.has(cleaned.toLowerCase())) return false;
+      return /[A-Za-z]/.test(cleaned);
+    }
+
+    function looksNumeric(token) {
+      return !!cleanNumber(token);
+    }
+
+    function cleanToken(token) {
+      return removeDiacritics(token).replace(/[^A-Za-z0-9\-\/\.½¼¾]/g, "");
+    }
+
+    function cleanTrack(token) {
+      return cleanToken(token).replace(/[^A-Za-z]/g, "");
+    }
+
+    function cleanDistance(token) {
+      return removeDiacritics(token).replace(/[^0-9mfy¼½¾\.]/g, "");
+    }
+
+    function cleanRaceType(token) {
+      return removeDiacritics(token).replace(/[^A-Za-z0-9\-\/\+\.]/g, "");
+    }
+
+    function cleanNumber(token) {
+      return replaceSuperscripts(removeDiacritics(token)).replace(/[^0-9\.\-:\/]/g, "");
+    }
+
+    function cleanOdds(token) {
+      return replaceSuperscripts(removeDiacritics(token)).replace(/[^0-9\.\-:\/]/g, "").replace(/^\*/, "");
+    }
+
+    function cleanName(token) {
+      return removeDiacritics(token).replace(/[^A-Za-z\-\'\.]/g, "");
+    }
+
+    function isGarbageToken(token) {
+      return !/[A-Za-z0-9]/.test(token);
+    }
+
+    function replaceSuperscripts(value) {
+      if (!value) return "";
+      const map = {
+        "⁰": "0",
+        "¹": "1",
+        "²": "2",
+        "³": "3",
+        "⁴": "4",
+        "⁵": "5",
+        "⁶": "6",
+        "⁷": "7",
+        "⁸": "8",
+        "⁹": "9",
+        "₀": "0",
+        "₁": "1",
+        "₂": "2",
+        "₃": "3",
+        "₄": "4",
+        "₅": "5",
+        "₆": "6",
+        "₇": "7",
+        "₈": "8",
+        "₉": "9"
+      };
+      return value.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹₀₁₂₃₄₅₆₇₈₉]/g, (char) => map[char] ?? "");
+    }
+
+    function removeDiacritics(value) {
+      if (!value) return "";
+      return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    }
+
+    function normalizeWhitespace(value) {
+      if (!value) return "";
+      return value.replace(/\s+/g, " ").trim();
+    }
+
+    function toCSV(rows, headers) {
+      const escapeCell = (value) => {
+        const stringValue = (value ?? "").toString();
+        if (/[",\n]/.test(stringValue)) {
+          return `"${stringValue.replace(/"/g, '""')}"`;
+        }
+        return stringValue;
+      };
+
+      const lines = [headers.join(",")];
+      for (const row of rows) {
+        const cells = headers.map((header) => escapeCell(row[header] ?? ""));
+        lines.push(cells.join(","));
+      }
+      return lines.join("\n");
+    }
+
+    function idle() {
+      return new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  </script>
+</body>
+</html>
