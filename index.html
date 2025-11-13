@@ -447,7 +447,8 @@
     function segmentHorseBlocks(lines) {
       const blocks = [];
       let current = null;
-      const horseHeader = /^\s*\d+\s+([^\(]+)\(/; // capture the horse name immediately before the "(E 6)" style suffix
+      // Matches the leading post-position number followed by the horse name, e.g. "1 Lucky Old Son (E 6)".
+      const horseHeader = /^\s*\d+\s+([^\(]+)\(/;
 
       for (const line of lines) {
         const trimmed = line.trim();
@@ -467,17 +468,27 @@
 
     function extractPastPerformances(block) {
       const ppLines = [];
-      const headerIndex = block.lines.findIndex((line) => line.toUpperCase().startsWith("DATE TRK DIST"));
+      // Identify the Past Performances table header even if spacing varies slightly across PDFs.
+      const headerIndex = block.lines.findIndex((line) => /DATE\s+TRK\s+DIST\s+RR\s+RACETYPE/i.test(line));
       if (headerIndex === -1) {
         return ppLines;
       }
 
       let current = "";
+      // Detect workout rows (e.g. "01Nov GP 4f ft") which signal the end of the PP section.
+      const workoutLine = /^\s*\d{2}[A-Za-z]{3}\s+[A-Za-z]{2,3}\s+\d(?:f|m)/i;
+      // Reuse the horse header expression so we stop when the next horse begins.
+      const horseHeader = /^\s*\d+\s+[^\(]+\(/;
       for (let i = headerIndex + 1; i < block.lines.length; i += 1) {
         const line = block.lines[i];
         const trimmed = line.trim();
 
-        if (!trimmed) {
+        if (
+          /Workouts?/i.test(trimmed) ||
+          workoutLine.test(trimmed) ||
+          horseHeader.test(trimmed) ||
+          /Prime Power/i.test(trimmed)
+        ) {
           if (current) {
             ppLines.push(normalizeWhitespace(current));
             current = "";
@@ -485,22 +496,7 @@
           break;
         }
 
-        if (/^\d{2}[A-Za-z]{3}(?!\d)/.test(trimmed)) {
-          if (current) {
-            ppLines.push(normalizeWhitespace(current));
-            current = "";
-          }
-          break;
-        }
-
-        if (/Workouts?/i.test(trimmed)) {
-          if (current) {
-            ppLines.push(normalizeWhitespace(current));
-            current = "";
-          }
-          break;
-        }
-
+        // A new race row always begins with the DDMonYY pattern at the start of the line.
         const newRow = /^\d{2}[A-Za-z]{3}\d{2}\b/.test(trimmed);
         if (newRow) {
           if (current) {
@@ -508,7 +504,9 @@
           }
           current = trimmed;
         } else if (current) {
-          current += " " + trimmed;
+          if (trimmed) {
+            current += " " + trimmed;
+          }
         }
       }
 
@@ -606,17 +604,49 @@
 
       const tailTokens = tokens.slice(idx);
       const finishers = [];
-      while (tailTokens.length && finishers.length < 3) {
-        const candidate = cleanName(tailTokens.shift());
-        if (candidate) {
-          finishers.push(candidate);
+      let commentStart = tailTokens.length;
+      let usedUntil = 0;
+      let buffer = [];
+      for (let j = 0; j < tailTokens.length; j += 1) {
+        const raw = tailTokens[j];
+        const cleaned = cleanName(raw);
+        const hasComma = /,/.test(raw);
+        const looksLikeComment = /;|\.|--/.test(raw);
+
+        if (looksLikeComment && finishers.length) {
+          commentStart = j;
+          break;
+        }
+
+        if (cleaned) {
+          buffer.push(cleaned);
+        }
+
+        if (hasComma && buffer.length) {
+          finishers.push(buffer.join(" "));
+          buffer = [];
+          usedUntil = j + 1;
+          if (finishers.length === 3) {
+            commentStart = j + 1;
+            break;
+          }
         }
       }
+
+      if (finishers.length < 3 && buffer.length) {
+        finishers.push(buffer.join(" "));
+        usedUntil = tailTokens.length;
+      }
+
+      if (commentStart === tailTokens.length && usedUntil < tailTokens.length) {
+        commentStart = usedUntil;
+      }
+
       if (finishers.length) {
         row["Top Finishers"] = finishers.join(", ");
       }
-      if (tailTokens.length) {
-        row.Comment = tailTokens.join(" ");
+      if (commentStart < tailTokens.length) {
+        row.Comment = tailTokens.slice(commentStart).join(" ");
       }
 
       return row;
